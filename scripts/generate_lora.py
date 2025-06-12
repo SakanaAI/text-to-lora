@@ -53,8 +53,21 @@ def load_hypermod(hypermod_dir, device):
 
 
 if __name__ == "__main__":
-    hypermod_dir = sys.argv[1]
-    task_desc = sys.argv[2].strip("\"' ")
+    parser = argparse.ArgumentParser(description="Generate LoRA for a given task description.")
+    parser.add_argument("hypermod_dir", type=str, help="Directory containing hypermod checkpoint and configuration.")
+    parser.add_argument("task_desc", type=str, help="Task description for which to generate LoRA.")
+    parser.add_argument("--task_desc_file", type=str, help="File containing the task description.")
+    args = parser.parse_args()
+
+    hypermod_dir = args.hypermod_dir
+
+    if args.task_desc_file:
+        with open(args.task_desc_file, "r") as f:
+            task_desc = f.read().strip("\"' ")
+    elif args.task_desc is None and not sys.stdin.isatty():
+        task_desc = sys.stdin.read().strip("\"' ")
+    else:
+        task_desc = args.task_desc.strip("\"' ")
 
     print(f"\nGenerating LoRA for description:\n\n{task_desc}")
 
@@ -62,13 +75,9 @@ if __name__ == "__main__":
 
     # load metadata
     args = argparse.Namespace(**yaml.safe_load(open(f"{hypermod_dir}/args.yaml", "r")))
-    peft_config = get_peft_config(
-        PeftConfig.from_json_file(f"{hypermod_dir}/adapter_config.json")
-    )
+    peft_config = get_peft_config(PeftConfig.from_json_file(f"{hypermod_dir}/adapter_config.json"))
     curtime = time.strftime("%Y%m%d_%H%M%S", time.localtime())
-    uuid = "".join(
-        [random.choice(string.ascii_letters + string.digits) for _ in range(8)]
-    )
+    uuid = "".join([random.choice(string.ascii_letters + string.digits) for _ in range(8)])
     (
         args,
         hypermod,
@@ -84,9 +93,7 @@ if __name__ == "__main__":
     emb_size = emb_model.config.hidden_size
 
     # generate loras
-    task_emb = embed_texts(
-        [task_desc], emb_model, emb_tokenizer, task_desc_format_fn, pooling_fn, device
-    )
+    task_emb = embed_texts([task_desc], emb_model, emb_tokenizer, task_desc_format_fn, pooling_fn, device)
     encoder_out = hypermod.task_encoder(task_emb)
     encoded_task_emb = encoder_out["encoded_task_emb"].detach()
     lora_sd = hypermod.gen_lora(layer_indices, encoded_task_emb)
