@@ -55,7 +55,9 @@ def load_hypermod(hypermod_dir, device):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generate LoRA for a given task description.")
     parser.add_argument("hypermod_dir", type=str, help="Directory containing hypermod checkpoint and configuration.")
-    parser.add_argument("task_desc", type=str, help="Task description for which to generate LoRA.")
+    parser.add_argument(
+        "task_desc", type=str, nargs="?", default=None, help="Task description for which to generate LoRA."
+    )
     parser.add_argument("--task_desc_file", type=str, help="File containing the task description.")
     args = parser.parse_args()
 
