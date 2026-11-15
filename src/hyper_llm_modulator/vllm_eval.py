@@ -1,4 +1,8 @@
 import os
+import json
+import math
+import shutil
+import tempfile
 import datasets
 import logging
 from functools import partial
@@ -42,6 +46,30 @@ class LoRAVLLMModel(VLLMModel):
         self.llm.generate = partial(self.llm.generate, lora_request=lora_request)
 
 
+def get_vllm_lora_dir(lora_dir: str) -> str:
+    """vLLM (0.5.4) scales LoRAs by lora_alpha / r and ignores `use_rslora`.
+    For rsLoRA adapters, return a temporary copy whose adapter_config.json has
+    lora_alpha set so that lora_alpha / r equals the rsLoRA scale lora_alpha / sqrt(r).
+    Weights are not modified (they are symlinked)."""
+    config_path = os.path.join(lora_dir, "adapter_config.json")
+    if not os.path.isfile(config_path):
+        return lora_dir
+    with open(config_path, "r") as f:
+        config = json.load(f)
+    if not config.get("use_rslora", False):
+        return lora_dir
+    config["lora_alpha"] = config["lora_alpha"] * math.sqrt(config["r"])
+    config["use_rslora"] = False
+    vllm_lora_dir = tempfile.mkdtemp(prefix="vllm_lora_")
+    for fname in os.listdir(lora_dir):
+        src = os.path.join(lora_dir, fname)
+        if fname != "adapter_config.json" and os.path.isfile(src):
+            os.symlink(os.path.abspath(src), os.path.join(vllm_lora_dir, fname))
+    with open(os.path.join(vllm_lora_dir, "adapter_config.json"), "w") as f:
+        json.dump(config, f, indent=2)
+    return vllm_lora_dir
+
+
 @torch.no_grad()
 def eval_model(
     model_dir,
@@ -78,7 +106,8 @@ def eval_model(
             # NOTE: the second argument cannot be 0 or it will be treated as None
             # so painful trying to figure this out :(
             # also has to be unique
-            lora_request = LoRARequest(f"lora_{i}", i + 1, lora_dir)
+            vllm_lora_dir = get_vllm_lora_dir(lora_dir)
+            lora_request = LoRARequest(f"lora_{i}", i + 1, vllm_lora_dir)
             model.use_lora(lora_request)
             if per_sample_lora:
                 assert len(lora_dirs) == evaluator.num_samples, (
@@ -87,6 +116,8 @@ def eval_model(
                 results[lora_dir] = evaluator.evaluate(model, [i])
             else:
                 results[lora_dir] = evaluator.evaluate(model)
+            if vllm_lora_dir != lora_dir:
+                shutil.rmtree(vllm_lora_dir)
     else:
         print(f"Evaluating base model at: {model_dir}")
         results[model_dir] = evaluator.evaluate(model)
@@ -204,7 +235,7 @@ def eval_gsm8k(
         answer = int(answer) if answer is not None else None
         samples.append(
             MathSample(
-                problem=template.format(**sample),
+                problem=problem,
                 answer=answer,
             )
         )
@@ -985,11 +1016,13 @@ def eval(
             prefill_text="",
             preprocessing_fn=get_preprocessing_fn(task),
         )
-    in_context_message = ""
+    # task description first, then the in-context examples
+    in_context_messages = []
+    if use_task_desc and task in TASK_DESCRIPTION_MESSAGES:
+        in_context_messages.append(TASK_DESCRIPTION_MESSAGES[task])
     if use_icl and task in IN_CONTEXT_EXAMPLES:
-        in_context_message = IN_CONTEXT_EXAMPLES[task]
-    elif use_task_desc and task in TASK_DESCRIPTION_MESSAGES:
-        in_context_message = TASK_DESCRIPTION_MESSAGES[task]
+        in_context_messages.append(IN_CONTEXT_EXAMPLES[task])
+    in_context_message = "\n\n".join(m for m in in_context_messages if m)
 
     eval_kwargs = dict(
         model_dir=model_dir,
