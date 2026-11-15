@@ -985,11 +985,13 @@ def eval(
             prefill_text="",
             preprocessing_fn=get_preprocessing_fn(task),
         )
-    in_context_message = ""
+    # task description first, then the in-context examples
+    in_context_messages = []
+    if use_task_desc and task in TASK_DESCRIPTION_MESSAGES:
+        in_context_messages.append(TASK_DESCRIPTION_MESSAGES[task])
     if use_icl and task in IN_CONTEXT_EXAMPLES:
-        in_context_message = IN_CONTEXT_EXAMPLES[task]
-    elif use_task_desc and task in TASK_DESCRIPTION_MESSAGES:
-        in_context_message = TASK_DESCRIPTION_MESSAGES[task]
+        in_context_messages.append(IN_CONTEXT_EXAMPLES[task])
+    in_context_message = "\n\n".join(m for m in in_context_messages if m)
 
     eval_kwargs = dict(
         model_dir=model_dir,
