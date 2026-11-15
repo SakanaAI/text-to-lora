@@ -204,7 +204,7 @@ def eval_gsm8k(
         answer = int(answer) if answer is not None else None
         samples.append(
             MathSample(
-                problem=template.format(**sample),
+                problem=problem,
                 answer=answer,
             )
         )
